@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Webinar App</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+        }
+        #video-container video {
+            width: 300px;
+            margin: 10px;
+            border: 1px solid #ccc;
+        }
+    </style>
+</head>
+<body>
+    <h1>Simple Webinar App</h1>
+    <div>
+        <input type="text" id="room-id" placeholder="Room ID">
+        <button onclick="createRoom()">Create Room</button>
+        <button onclick="joinRoom()">Join Room</button>
+    </div>
+    <div id="video-container"></div>
+
+    <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/simple-peer/simplepeer.min.js"></script>
+    <script>
+        const socket = io("http://localhost:3000"); // Explicitly connect to the backend
+        let localStream;
+        let peers = {};
+
+        // Access user's video and audio
+        async function getMedia() {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                const video = document.createElement('video');
+                video.srcObject = localStream;
+                video.autoplay = true;
+                video.muted = true;
+                document.getElementById('video-container').appendChild(video);
+            } catch (err) {
+                console.error('Error accessing media devices:', err);
+            }
+        }
+
+        getMedia();
+
+        // Create Room
+        function createRoom() {
+            const roomID = document.getElementById('room-id').value;
+            if (roomID) {
+                socket.emit('create-room', roomID);
+            }
+        }
+
+        // Join Room
+        function joinRoom() {
+            const roomID = document.getElementById('room-id').value;
+            if (roomID) {
+                socket.emit('join-room', roomID);
+            }
+        }
+
+        // Handle room events
+        socket.on('room-created', (roomID) => console.log(`Room created: ${roomID}`));
+        socket.on('room-joined', (roomID) => console.log(`Joined room: ${roomID}`));
+
+        // Handle a new user joining
+        socket.on('user-joined', (userID) => {
+            console.log(`User joined: ${userID}`);
+            connectToPeer(userID, true);
+        });
+
+        // Handle WebRTC signaling
+        socket.on('signal', ({ signalData, sourceID }) => {
+            if (peers[sourceID]) {
+                peers[sourceID].signal(signalData);
+            }
+        });
+
+        // Connect to a peer
+        function connectToPeer(targetID, initiator = false) {
+            const peer = new SimplePeer({
+                initiator,
+                trickle: false,
+                stream: localStream,
+            });
+
+            // Send signaling data to the target peer
+            peer.on('signal', (signalData) => {
+                socket.emit('signal', { signalData, targetID });
+            });
+
+            // Display the peer's video stream
+            peer.on('stream', (stream) => {
+                const video = document.createElement('video');
+                video.srcObject = stream;
+                video.autoplay = true;
+                document.getElementById('video-container').appendChild(video);
+            });
+
+            peers[targetID] = peer;
+        }
+
+        // Handle when a user leaves
+        socket.on('user-left', (userID) => {
+            if (peers[userID]) {
+                peers[userID].destroy();
+                delete peers[userID];
+            }
+        });
+
+        // Handle existing users in the room
+        socket.on('existing-users', (users) => {
+            users.forEach((userID) => connectToPeer(userID, false));
+        });
+    </script>
+</body>
+</html>
